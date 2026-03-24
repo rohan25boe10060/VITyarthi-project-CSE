@@ -1,0 +1,298 @@
+"""
+Cattle Health Symptom Checker
+==============================
+A simple Python tool that helps rural households identify possible
+cattle illnesses based on observed symptoms and recommends whether
+to call a veterinarian.
+
+Author: BYOP Project
+Course: Python / Data Science
+"""
+
+import csv
+import os
+from datetime import datetime
+
+# ──────────────────────────────────────────────
+# KNOWLEDGE BASE
+# Each illness has: name, matched symptoms, severity, advice
+# ──────────────────────────────────────────────
+
+KNOWLEDGE_BASE = [
+    {
+        "illness": "Foot and Mouth Disease (FMD)",
+        "symptoms": ["blisters on mouth", "blisters on feet", "not eating", "limping", "drooling", "fever"],
+        "min_match": 3,
+        "severity": "HIGH",
+        "advice": "Isolate the animal immediately. This is highly contagious. Contact a vet urgently.",
+        "home_care": "Keep wounds clean. Provide soft feed and clean water."
+    },
+    {
+        "illness": "Bloat (Rumen Tympany)",
+        "symptoms": ["swollen stomach", "not eating", "restless", "kicking at stomach", "difficulty breathing"],
+        "min_match": 2,
+        "severity": "HIGH",
+        "advice": "Call a vet immediately. Bloat can be fatal within hours if untreated.",
+        "home_care": "Walk the animal slowly. Do NOT let it lie down. Keep it moving until the vet arrives."
+    },
+    {
+        "illness": "Bovine Respiratory Disease (BRD)",
+        "symptoms": ["coughing", "nasal discharge", "fever", "not eating", "laboured breathing", "dull eyes"],
+        "min_match": 2,
+        "severity": "MEDIUM",
+        "advice": "Consult a vet for antibiotic treatment. Early treatment improves recovery.",
+        "home_care": "Keep the animal in a dry, ventilated area. Ensure fresh water is available."
+    },
+    {
+        "illness": "Mastitis",
+        "symptoms": ["swollen udder", "hot udder", "milk changes", "not eating", "fever", "kicking while milking"],
+        "min_match": 2,
+        "severity": "MEDIUM",
+        "advice": "See a vet for diagnosis and antibiotics. Do not feed the milk to calves.",
+        "home_care": "Milk the affected quarter frequently. Apply cold compress to reduce swelling."
+    },
+    {
+        "illness": "Tick Fever (Theileriosis)",
+        "symptoms": ["fever", "pale gums", "weakness", "not eating", "weight loss", "enlarged lymph nodes"],
+        "min_match": 3,
+        "severity": "HIGH",
+        "advice": "Urgent veterinary care needed. Tick fever is often fatal without treatment.",
+        "home_care": "Remove visible ticks. Keep the animal cool and shaded. Provide clean water."
+    },
+    {
+        "illness": "Diarrhoea / Calf Scours",
+        "symptoms": ["loose stool", "watery stool", "weakness", "not eating", "dehydration", "dull eyes"],
+        "min_match": 2,
+        "severity": "MEDIUM",
+        "advice": "If severe or lasting more than 24 hours, call a vet. Young calves deteriorate quickly.",
+        "home_care": "Provide oral rehydration solution (ORS). Isolate from healthy animals."
+    },
+    {
+        "illness": "Milk Fever (Hypocalcaemia)",
+        "symptoms": ["unable to stand", "muscle tremors", "cold ears", "dull eyes", "recently calved"],
+        "min_match": 2,
+        "severity": "HIGH",
+        "advice": "Requires immediate calcium injection by a vet. Do not delay.",
+        "home_care": "Keep the animal warm and comfortable. Do not leave unattended."
+    },
+    {
+        "illness": "External Parasites (Mange / Lice)",
+        "symptoms": ["scratching", "hair loss", "skin crusty", "restless", "weight loss"],
+        "min_match": 2,
+        "severity": "LOW",
+        "advice": "Treatable with anti-parasitic sprays. Consult a vet or local animal health worker.",
+        "home_care": "Clean the pen thoroughly. Isolate affected animals. Avoid sharing grooming tools."
+    },
+    {
+        "illness": "Conjunctivitis (Pinkeye)",
+        "symptoms": ["watery eyes", "red eyes", "swollen eyes", "sensitivity to light", "rubbing eyes"],
+        "min_match": 2,
+        "severity": "LOW",
+        "advice": "Eye drops or antibiotic ointment from a vet. Usually resolves with treatment.",
+        "home_care": "Keep the animal in shade. Clean discharge from eyes with clean cloth daily."
+    },
+    {
+        "illness": "General Weakness / Unknown",
+        "symptoms": ["weakness", "not eating", "weight loss", "dull eyes", "lethargy"],
+        "min_match": 2,
+        "severity": "LOW",
+        "advice": "Monitor closely. If symptoms persist for more than 2 days, consult a vet.",
+        "home_care": "Ensure proper nutrition, clean water, and rest. Check for fever."
+    }
+]
+
+ALL_SYMPTOMS = sorted(set(
+    symptom
+    for illness in KNOWLEDGE_BASE
+    for symptom in illness["symptoms"]
+))
+
+LOG_FILE = "consultation_log.csv"
+
+
+# ──────────────────────────────────────────────
+# CORE FUNCTIONS
+# ──────────────────────────────────────────────
+
+def display_welcome():
+    print("\n" + "=" * 58)
+    print("       🐄  CATTLE HEALTH SYMPTOM CHECKER  🐄")
+    print("=" * 58)
+    print(" Helping rural households identify cattle illnesses")
+    print(" and decide when to call a veterinarian.")
+    print("=" * 58 + "\n")
+
+
+def get_animal_info():
+    print("── Animal Details ───────────────────────────────────")
+    name = input("  Animal name / ID (e.g., Gauri, Cow-1): ").strip() or "Unknown"
+    animal_type = input("  Type (cow / buffalo / calf / bull): ").strip().lower() or "cow"
+    age = input("  Approximate age (e.g., 4 years): ").strip() or "Unknown"
+    print()
+    return {"name": name, "type": animal_type, "age": age}
+
+
+def display_symptom_menu():
+    print("── Available Symptoms ───────────────────────────────")
+    for i, symptom in enumerate(ALL_SYMPTOMS, 1):
+        print(f"  {i:>2}. {symptom}")
+    print()
+
+
+def get_selected_symptoms():
+    display_symptom_menu()
+    print("Enter the numbers of symptoms you observe (comma-separated).")
+    print("Example: 1, 4, 7")
+    print()
+    raw = input("  Your selection: ").strip()
+
+    selected = []
+    try:
+        indices = [int(x.strip()) - 1 for x in raw.split(",") if x.strip()]
+        for idx in indices:
+            if 0 <= idx < len(ALL_SYMPTOMS):
+                selected.append(ALL_SYMPTOMS[idx])
+    except ValueError:
+        print("  ⚠ Invalid input. Please enter numbers only.")
+        return []
+
+    return selected
+
+
+def diagnose(selected_symptoms):
+    if not selected_symptoms:
+        return []
+
+    results = []
+    for illness in KNOWLEDGE_BASE:
+        matched = [s for s in selected_symptoms if s in illness["symptoms"]]
+        if len(matched) >= illness["min_match"]:
+            score = len(matched) / len(illness["symptoms"])
+            results.append({
+                "illness": illness["illness"],
+                "severity": illness["severity"],
+                "matched_symptoms": matched,
+                "match_count": len(matched),
+                "score": score,
+                "advice": illness["advice"],
+                "home_care": illness["home_care"]
+            })
+
+    # Sort by severity then match score
+    severity_order = {"HIGH": 0, "MEDIUM": 1, "LOW": 2}
+    results.sort(key=lambda x: (severity_order[x["severity"]], -x["score"]))
+    return results
+
+
+def display_results(animal_info, selected_symptoms, results):
+    print("\n" + "=" * 58)
+    print(f"  RESULTS FOR: {animal_info['name'].upper()} ({animal_info['type']}, {animal_info['age']})")
+    print("=" * 58)
+    print(f"  Symptoms reported: {', '.join(selected_symptoms)}")
+    print()
+
+    if not results:
+        print("  ✅ No specific illness matched the given symptoms.")
+        print("  Monitor the animal closely.")
+        print("  If symptoms worsen, consult a veterinarian.")
+        return
+
+    print(f"  {len(results)} possible condition(s) found:\n")
+
+    severity_icons = {"HIGH": "🔴", "MEDIUM": "🟡", "LOW": "🟢"}
+
+    for i, r in enumerate(results, 1):
+        icon = severity_icons[r["severity"]]
+        print(f"  {i}. {icon} {r['illness']}  [{r['severity']} SEVERITY]")
+        print(f"     Matched symptoms ({r['match_count']}): {', '.join(r['matched_symptoms'])}")
+        print(f"     ➤ Advice    : {r['advice']}")
+        print(f"     ➤ Home care : {r['home_care']}")
+        print()
+
+    # Emergency alert
+    high_severity = [r for r in results if r["severity"] == "HIGH"]
+    if high_severity:
+        print("  ⚠️  HIGH SEVERITY condition detected!")
+        print("  ➤ Please contact a veterinarian immediately.")
+        print("  ➤ National Livestock Helpline (India): 1962")
+    print("=" * 58)
+
+
+def log_consultation(animal_info, selected_symptoms, results):
+    file_exists = os.path.isfile(LOG_FILE)
+    with open(LOG_FILE, "a", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        if not file_exists:
+            writer.writerow(["Timestamp", "Animal Name", "Type", "Age",
+                             "Symptoms", "Top Diagnosis", "Severity"])
+        top = results[0] if results else {"illness": "None", "severity": "N/A"}
+        writer.writerow([
+            datetime.now().strftime("%Y-%m-%d %H:%M"),
+            animal_info["name"],
+            animal_info["type"],
+            animal_info["age"],
+            "; ".join(selected_symptoms),
+            top["illness"],
+            top["severity"]
+        ])
+    print(f"\n  📋 Consultation saved to '{LOG_FILE}'")
+
+
+def view_logs():
+    if not os.path.isfile(LOG_FILE):
+        print("\n  No consultation history found.")
+        return
+    print("\n── Past Consultations ───────────────────────────────")
+    with open(LOG_FILE, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        rows = list(reader)
+    if not rows:
+        print("  No records yet.")
+        return
+    print(f"  {'Date':<18} {'Animal':<12} {'Diagnosis':<35} {'Severity'}")
+    print("  " + "-" * 80)
+    for row in rows:
+        print(f"  {row['Timestamp']:<18} {row['Animal Name']:<12} "
+              f"{row['Top Diagnosis']:<35} {row['Severity']}")
+    print()
+
+
+# ──────────────────────────────────────────────
+# MAIN LOOP
+# ──────────────────────────────────────────────
+
+def main():
+    display_welcome()
+
+    while True:
+        print("\nWhat would you like to do?")
+        print("  1. Check cattle symptoms")
+        print("  2. View past consultations")
+        print("  3. Exit")
+        choice = input("\n  Enter choice (1/2/3): ").strip()
+
+        if choice == "1":
+            animal_info = get_animal_info()
+            selected_symptoms = get_selected_symptoms()
+
+            if not selected_symptoms:
+                print("  No valid symptoms selected. Please try again.")
+                continue
+
+            results = diagnose(selected_symptoms)
+            display_results(animal_info, selected_symptoms, results)
+            log_consultation(animal_info, selected_symptoms, results)
+
+        elif choice == "2":
+            view_logs()
+
+        elif choice == "3":
+            print("\n  Take care of your animals! Goodbye. 🐄\n")
+            break
+
+        else:
+            print("  Invalid choice. Please enter 1, 2, or 3.")
+
+
+if __name__ == "__main__":
+    main()
